@@ -3,13 +3,8 @@ import torch
 import torch.nn as nn
 import pandas as pd
 
-class GPT2Model(nn.Module):
-    def __init__(self, embedDim, vocabSize, windowSize):
-        super().__init__()
-        self.embedDim = embedDim
-        self.customEmbed = CustomEmbed(embedDim, vocabSize, windowSize)
-        nn.MultiheadAttention()
-
+def generateRandomData():
+    pass
 
 class CustomEmbed(nn.module):
     def __init__(self, embedDim, vocabSize, windowSize):
@@ -27,3 +22,34 @@ class CustomEmbed(nn.module):
         embed = self.embed(vector)
         positionalEmbed = embed + self.pe.expand(embed.shape(0),-1,-1)
         return positionalEmbed
+
+
+
+class GPT2Model(nn.Module):
+    def __init__(self, embedDim, vocabSize, windowSize, layers):
+        super().__init__()
+        self.embedDim = embedDim
+        self.layers = layers
+        self.customEmbed = CustomEmbed(embedDim, vocabSize, windowSize)
+        self.Q = nn.Linear(embedDim,embedDim)
+        self.K = nn.Linear(embedDim,embedDim)
+        self.V = nn.Linear(embedDim,embedDim)
+        self.transformerBlock = nn.Sequential(
+            nn.MultiheadAttention(embed_dim=embedDim,num_heads=12,attbatch_first=True,),
+            nn.Linear(embedDim,4*embedDim),
+            nn.GELU(),
+            nn.Linear(embedDim*4,embedDim),
+            nn.GELU()
+        )
+        self.outputLayer = nn.Linear(embedDim,vocabSize)
+        self.softmax = nn.Softmax(dim=-1)
+
+    
+    def forward(self, batch, attn, pad_mask):
+        while sum(pad_mask > 0) > 0:
+            embeded = self.customEmbed(batch)
+            for _ in range(self.layers):
+                self.transformerBlock(embeded, attn, )
+            
+
+
