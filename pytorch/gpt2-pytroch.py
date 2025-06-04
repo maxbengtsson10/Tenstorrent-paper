@@ -3,18 +3,20 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import time
+from tqdm import tqdm
 
 
 class CustomEmbed(nn.Module):
-    def __init__(self, embedDim, vocabSize, windowSize):
+    def __init__(self, embedDim, vocabSize, windowSize, device):
         super().__init__()
         self.embed = nn.Embedding(vocabSize,embedDim)
         self.embedDim = embedDim
         self.pe = torch.zeros((windowSize,embedDim))
         for word in range(windowSize):
             for i in range(embedDim // 2):
-                self.pe[word,2*i] = torch.sin(word/(torch.pow(10000,((2*i)/embedDim))))
-                self.pe[word,2*i+1] = torch.cos(word/(torch.pow(10000,((2*i)/embedDim))))
+                self.pe[word,2*i] = np.sin(word/(np.power(10000,((2*i)/embedDim))))
+                self.pe[word,2*i+1] = np.cos(word/(np.power(10000,((2*i)/embedDim))))
+        self.pe = self.pe.to(device)
 
     
     def forward(self, vector):
@@ -41,12 +43,12 @@ class CustomTransformer(nn.Module):
             nn.GELU()
         )
 
-    def forward(self,embed, padMask):
+    def forward(self,embed, padMask, attn):
 
         q = self.Q(embed)
         k = self.K(embed)
         v = self.V(embed)
-        x, _ = self.mha(q,k,v,key_padding_mask=padMask,is_causal=True)
+        x, _ = self.mha(q,k,v,attn_mask=attn,key_padding_mask=padMask,is_causal=True)
         out = self.ffnn(x)
         return out
 
@@ -55,14 +57,17 @@ class CustomTransformer(nn.Module):
 
 
 class GPT2Model(nn.Module):
-    def __init__(self, embedDim, numHeads, vocabSize, windowSize, layers):
+    def __init__(self, embedDim, numHeads, vocabSize, windowSize, layers, device):
         super().__init__()
         self.embedDim = embedDim
         self.layers = layers
         self.windowSize = windowSize
-        self.customEmbed = CustomEmbed(embedDim, vocabSize, windowSize)
+        self.customEmbed = CustomEmbed(embedDim, vocabSize, windowSize, device)
         
         self.transformerLayers = nn.ModuleList([CustomTransformer(embedDim,numHeads) for _ in range(layers)])
+
+        self.autoRegMask = nn.Transformer.generate_square_subsequent_mask(self.windowSize,dtype=torch.bool)
+        self.autoRegMask = self.autoRegMask.to(device)
 
         self.outputLayer = nn.Linear(embedDim,vocabSize)
         self.softmax = nn.Softmax(dim=-1)
@@ -72,30 +77,30 @@ class GPT2Model(nn.Module):
         while i < self.windowSize:
             x = self.customEmbed(text)
             for layer in self.transformerLayers:
-                x = layer(x,padMask)
+                x = layer(x,padMask, self.autoRegMask)
             nextTok = x[:,-1,:]
             nextTok = self.outputLayer(nextTok)
             nextTok = self.softmax(nextTok)
             nextTokID = torch.argmax(nextTok,dim=-1)
             
             text[:,i] = nextTokID
-            padMask[:,i] = True
+            padMask[:,i] = False
             i += 1
 
 
 if __name__ == "__main__":
 
-    device = "cpu"
+    device = "mps"
     embedDim = 768
     heads = 12
     vocab = 50000
-    windowSize = 2048
+    windowSize = 512 
     layers = 12
 
-    runs = 100
+    runs = 5
 
 
-    model = GPT2Model(embedDim,heads,vocab,windowSize,layers)
+    model = GPT2Model(embedDim,heads,vocab,windowSize,layers,device)
     model.eval()
     model.to(device)
 
@@ -104,8 +109,8 @@ if __name__ == "__main__":
     inputWord = inputWord.unsqueeze(0)
     inputWord = inputWord.to(device)
 
-    mask = [False for _ in range(windowSize)]
-    mask[0] = True
+    mask = [True for _ in range(windowSize)]
+    mask[0] = False
     inputMask = torch.tensor(mask)
     inputMask = inputMask.unsqueeze(0)
     inputMask = inputMask.to(device)
@@ -118,7 +123,7 @@ if __name__ == "__main__":
     timeStart = time.perf_counter()
 
     with torch.no_grad():
-        for _ in range(runs):
+        for _ in tqdm(range(runs)):
             inputWordUse = inputWord.clone()
             inputMaskUse = inputMask.clone()
             model(inputWordUse,inputMaskUse,1)
