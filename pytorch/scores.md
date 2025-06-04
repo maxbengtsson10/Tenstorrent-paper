@@ -8,5 +8,5 @@
 | GPU          | Nvidia T4                  | 25.86      | 19.76        | 98.79      |
 | GPU          | Nvidia L4                  | 52.82      | 9.68         | 48.38      |
 | GPU          | Nvidia A100                | 78.30      | 6.53         | 32.63      |
-| GPU          | Nvidia A6000               |            |              |            |
+| GPU          | Nvidia A6000               | 84.94      | 6.02         | 30.76      |
 
