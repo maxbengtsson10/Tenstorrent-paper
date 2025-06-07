@@ -5,9 +5,12 @@ import pandas as pd
 import time
 from tqdm import tqdm
 
+import torch_ttnn
+from torch_ttnn import ttnn
+
 
 class CustomEmbed(nn.Module):
-    def __init__(self, embedDim, vocabSize, windowSize, device):
+    def __init__(self, embedDim, vocabSize, windowSize):
         super().__init__()
         self.embed = nn.Embedding(vocabSize,embedDim)
         self.embedDim = embedDim
@@ -16,7 +19,6 @@ class CustomEmbed(nn.Module):
             for i in range(embedDim // 2):
                 self.pe[word,2*i] = np.sin(word/(np.power(10000,((2*i)/embedDim))))
                 self.pe[word,2*i+1] = np.cos(word/(np.power(10000,((2*i)/embedDim))))
-        self.pe = self.pe.to(device)
 
     
     def forward(self, vector):
@@ -57,17 +59,16 @@ class CustomTransformer(nn.Module):
 
 
 class GPT2Model(nn.Module):
-    def __init__(self, embedDim, numHeads, vocabSize, windowSize, layers, device):
+    def __init__(self, embedDim, numHeads, vocabSize, windowSize, layers):
         super().__init__()
         self.embedDim = embedDim
         self.layers = layers
         self.windowSize = windowSize
-        self.customEmbed = CustomEmbed(embedDim, vocabSize, windowSize, device)
+        self.customEmbed = CustomEmbed(embedDim, vocabSize, windowSize)
         
         self.transformerLayers = nn.ModuleList([CustomTransformer(embedDim,numHeads) for _ in range(layers)])
 
         self.autoRegMask = nn.Transformer.generate_square_subsequent_mask(self.windowSize,dtype=torch.bool)
-        self.autoRegMask = self.autoRegMask.to(device)
 
         self.outputLayer = nn.Linear(embedDim,vocabSize)
         self.softmax = nn.Softmax(dim=-1)
@@ -90,7 +91,6 @@ class GPT2Model(nn.Module):
 
 if __name__ == "__main__":
 
-    device = "mps"
     embedDim = 768
     heads = 12
     vocab = 50000
@@ -100,41 +100,30 @@ if __name__ == "__main__":
     runs = 5
 
 
-    model = GPT2Model(embedDim,heads,vocab,windowSize,layers,device)
+    model = GPT2Model(embedDim,heads,vocab,windowSize,layers)
     model.eval()
-    model.to(device)
 
     inputWord = torch.zeros(windowSize,dtype=torch.long)
     inputWord[0] = np.random.randint(0,50000)
     inputWord = inputWord.unsqueeze(0)
-    inputWord = inputWord.to(device)
 
     mask = [True for _ in range(windowSize)]
     mask[0] = False
     inputMask = torch.tensor(mask)
     inputMask = inputMask.unsqueeze(0)
-    inputMask = inputMask.to(device)
 
+    # Compile the module, with ttnn backend
+    device = ttnn.open_device(device_id=0)
+    option = torch_ttnn.TorchTtnnOption(device=device)
+    ttnn_module = torch.compile(model, backend=torch_ttnn.backend, options=option)
 
-    if device == "cuda":
-        torch.cuda.synchronize()
-    elif device == "mps":
-        torch.mps.synchronize()
     timeStart = time.perf_counter()
+    # Running inference / training
+    ttnn_module(inputWord,inputMask)
 
-    with torch.no_grad():
-        for _ in tqdm(range(runs)):
-            inputWordUse = inputWord.clone()
-            inputMaskUse = inputMask.clone()
-            model(inputWordUse,inputMaskUse,1)
-
-    if device == "cuda":
-        torch.cuda.synchronize()
-    elif device == "mps":
-        torch.mps.synchronize()
     timeEnd = time.perf_counter()
 
-    totalTime = timeEnd - timeStart
+    totalTime = timeEnd - timeStart  # in seconds, often sub‐microsecond precision
     print(f"Total Time: {totalTime:.9f} sec")
     print(f"Per Run: {totalTime/runs:.9f} sec")
     print(f"Tokens/Sec: {((windowSize-1)*runs)/totalTime:.2f}")

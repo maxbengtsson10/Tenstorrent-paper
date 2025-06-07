@@ -5,6 +5,10 @@ import pandas as pd
 import time
 from tqdm import tqdm
 
+import torch_xla
+import torch_xla.core.xla_model as xm
+import torch_xla.debug.metrics as met
+
 
 class CustomEmbed(nn.Module):
     def __init__(self, embedDim, vocabSize, windowSize, device):
@@ -73,31 +77,29 @@ class GPT2Model(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     
-    def forward(self, text, padMask, i):
-        while i < self.windowSize:
-            x = self.customEmbed(text)
-            for layer in self.transformerLayers:
-                x = layer(x,padMask, self.autoRegMask)
-            nextTok = x[:,-1,:]
-            nextTok = self.outputLayer(nextTok)
-            nextTok = self.softmax(nextTok)
-            nextTokID = torch.argmax(nextTok,dim=-1)
-            
-            text[:,i] = nextTokID
-            padMask[:,i] = False
-            i += 1
+    def forward(self, text, padMask):
+        x = self.customEmbed(text)
+        for layer in self.transformerLayers:
+            x = layer(x,padMask, self.autoRegMask)
+        nextTok = x[:,-1,:]
+        nextTok = self.outputLayer(nextTok)
+        nextTok = self.softmax(nextTok)
+        nextTokID = torch.argmax(nextTok,dim=-1)
+
+        return nextTokID
 
 
 if __name__ == "__main__":
 
-    device = "mps"
+    device = xm.xla_device()
+    print(f"Using device: {device}")
+    
     embedDim = 768
     heads = 12
     vocab = 50000
     windowSize = 512 
     layers = 12
 
-    runs = 5
 
 
     model = GPT2Model(embedDim,heads,vocab,windowSize,layers,device)
@@ -116,28 +118,38 @@ if __name__ == "__main__":
     inputMask = inputMask.to(device)
 
 
-    if device == "cuda":
-        torch.cuda.synchronize()
-    elif device == "mps":
-        torch.mps.synchronize()
+    print("Warming up TPU...")
+    with torch.no_grad():
+        i = 0
+        for i in range(5):
+            nextToken = model(inputWord, inputMask)
+            inputWord[:,i] = nextToken
+            inputMask[:,i] = False
+    
+    xm.mark_step()
+    print("TPU warmup complete")
+
+    inputMask[:,0] = False
+    inputMask[:,1:] = True
+
     timeStart = time.perf_counter()
 
-    with torch.no_grad():
-        for _ in tqdm(range(runs)):
-            inputWordUse = inputWord.clone()
-            inputMaskUse = inputMask.clone()
-            model(inputWordUse,inputMaskUse,1)
+    for i in tqdm(range(1,windowSize)):
+        nextTok = model(inputWord,inputMask)
+        inputWord[:,i] = nextTok
+        inputMask[:,i] = False
 
-    if device == "cuda":
-        torch.cuda.synchronize()
-    elif device == "mps":
-        torch.mps.synchronize()
+        if i % 10 == 0:
+            xm.mark_step()
+
+    xm.mark_step()
     timeEnd = time.perf_counter()
 
-    totalTime = timeEnd - timeStart
+    
+
+    totalTime = timeEnd - timeStart  # in seconds, often sub‐microsecond precision
     print(f"Total Time: {totalTime:.9f} sec")
-    print(f"Per Run: {totalTime/runs:.9f} sec")
-    print(f"Tokens/Sec: {((windowSize-1)*runs)/totalTime:.2f}")
+    print(f"Tokens/Sec: {((windowSize-1))/totalTime:.2f}")
 
 
 
