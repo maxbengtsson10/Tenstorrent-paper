@@ -3,7 +3,7 @@
 | Compute Type | Compute Name                       | Tokens/Sec | Per Run Time | Total Time |
 | :----------- | :--------------------------------- | :--------: | :----------: | :--------: |
 | CPU          | Apple M3 Max CPU (14 core)         | 8.00       | 63.89        | 319.46     |
-| CPU          | Intel                              |            |              |            |
+| CPU          | Intel(R) Xeon(R) Gold 5218R        | 3.52       | 145.15       | -          |
 | GPU          | Apple M3 Max GPU (30 core)         | 41.61      | 12.28        | 61.40      |
 | GPU          | Nvidia T4                          | 25.86      | 19.76        | 98.79      |
 | GPU          | Nvidia L4                          | 52.82      | 9.68         | 48.38      |

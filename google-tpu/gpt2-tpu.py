@@ -147,7 +147,7 @@ if __name__ == "__main__":
 
     
 
-    totalTime = timeEnd - timeStart  # in seconds, often sub‐microsecond precision
+    totalTime = timeEnd - timeStart  
     print(f"Total Time: {totalTime:.9f} sec")
     print(f"Tokens/Sec: {((windowSize-1))/totalTime:.2f}")
 
